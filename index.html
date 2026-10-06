@@ -7,11 +7,12 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
 <style>
   :root {
-    --panel: rgba(24, 28, 38, 0.92);
+    --panel: rgba(24, 28, 38, 0.94);
     --card: rgba(255, 255, 255, 0.06);
     --text: #e8ecf3;
     --muted: #9aa4b5;
     --accent: #4a90e2;
+    --warn: #f5a623;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: #111; color: var(--text);
@@ -22,15 +23,42 @@
     padding: 14px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4); }
   .panel h2 { margin: 0 0 8px; font-size: 17px; }
   .muted { color: var(--muted); font-size: 12px; line-height: 1.6; }
+  .hidden { display: none !important; }
 
-  #info { top: 12px; left: 12px; width: 270px; }
+  /* 左上：全台統計卡 / 縣市預報（同一個位置切換） */
+  #info, #county { top: 12px; left: 12px; width: 300px; }
+  #county { max-height: calc(100% - 80px); overflow-y: auto; }
   .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
   .stat { background: var(--card); border-radius: 8px; padding: 8px 10px; }
   .stat .label { font-size: 12px; color: var(--muted); }
   .stat .value { font-size: 21px; font-weight: 700; margin: 2px 0; }
   .stat .value small { font-size: 12px; font-weight: 400; color: var(--muted); }
   .stat .where { font-size: 12px; color: var(--muted); }
+  .hint { margin-top: 10px; font-size: 12px; color: var(--muted); }
 
+  .county-head { display: flex; justify-content: space-between; align-items: center; }
+  .close { border: 0; background: var(--card); color: var(--text); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  .now { display: flex; align-items: baseline; gap: 8px; margin: 6px 0 2px; }
+  .now .big { font-size: 34px; font-weight: 700; }
+  .tag { display: inline-block; background: rgba(245, 166, 35, 0.18); color: var(--warn); border-radius: 6px;
+    padding: 2px 8px; font-size: 12px; margin: 4px 4px 0 0; }
+  .chart-box { position: relative; height: 170px; margin: 10px 0 6px; }
+  table.days { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.days td { padding: 5px 2px; border-top: 1px solid rgba(255, 255, 255, 0.07); }
+  table.days td:last-child, table.days td:nth-child(3) { text-align: right; white-space: nowrap; }
+
+  /* 上方中間：天氣特報 */
+  #warnings { top: 12px; left: 50%; transform: translateX(-50%); width: 440px; padding: 10px 14px; }
+  .warn-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; cursor: pointer; }
+  .warn-head b { color: var(--warn); }
+  #warn-list { max-height: 230px; overflow-y: auto; margin-top: 8px; }
+  .warn-item { background: var(--card); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; font-size: 13px; line-height: 1.6; }
+  .warn-item .title { color: var(--warn); font-weight: 700; }
+  .warn-item .text { white-space: pre-line; max-height: 4.8em; overflow: hidden; }
+  .warn-item.open .text { max-height: none; }
+  .warn-item .more { color: var(--accent); cursor: pointer; font-size: 12px; }
+
+  /* 右上：圖層控制 */
   #controls { top: 12px; right: 12px; width: 170px; }
   .controls-title { font-size: 12px; color: var(--muted); margin: 0 0 6px; }
   .btn { display: block; width: 100%; margin-bottom: 6px; padding: 8px 10px; border: 0;
@@ -42,7 +70,7 @@
   .row .btn { text-align: center; }
   .check { display: flex; align-items: center; gap: 6px; font-size: 13px; margin: 8px 0 0; cursor: pointer; }
 
-  #legend { bottom: 24px; right: 12px; width: 250px; padding: 10px 14px; }
+  #legend { bottom: 24px; right: 60px; width: 250px; padding: 10px 14px; }  /* 右邊留給縮放按鈕 */
   #legend-bar { height: 10px; border-radius: 5px; margin: 6px 0 4px; }
   #legend-ticks { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
 
@@ -55,11 +83,15 @@
   .leaflet-popup-content { font-size: 13px; line-height: 1.7; }
   .leaflet-popup-content b { font-size: 15px; }
 
+  @media (max-width: 1100px) {
+    #warnings { top: auto; bottom: 70px; left: 12px; transform: none; width: calc(100% - 24px - 190px); }
+  }
   @media (max-width: 640px) {
-    #info { width: calc(100% - 24px); }
-    .stats { grid-template-columns: repeat(4, 1fr); }
+    #info, #county { width: calc(100% - 24px); }
+    #info .stats { grid-template-columns: repeat(4, 1fr); }
     .stat .value { font-size: 16px; }
     #controls { top: auto; bottom: 70px; width: 150px; }
+    #warnings { bottom: 70px; width: calc(100% - 24px - 162px); }
     #legend { display: none; }
   }
 </style>
@@ -80,6 +112,28 @@
     <div class="stat"><div class="label">今日最大雨量</div><div class="value" id="max-rain">–</div><div class="where" id="max-rain-at"></div></div>
     <div class="stat"><div class="label">最大風速</div><div class="value" id="max-wind">–</div><div class="where" id="max-wind-at"></div></div>
   </div>
+  <div class="hint">👆 點地圖上的縣市，查看該縣市一週天氣預報</div>
+</div>
+
+<div id="county" class="panel hidden">
+  <div class="county-head">
+    <h2 id="county-name" style="margin:0"></h2>
+    <button class="close" id="county-close">✕ 返回</button>
+  </div>
+  <div class="now"><span class="big" id="county-temp">–</span><span class="muted" id="county-now"></span></div>
+  <div class="muted" id="county-detail"></div>
+  <div id="county-warnings"></div>
+  <div class="muted" style="margin-top:10px">一週預報（CWA F-D0047-091）</div>
+  <div class="chart-box"><canvas id="county-chart"></canvas></div>
+  <table class="days"><tbody id="county-days"></tbody></table>
+</div>
+
+<div id="warnings" class="panel hidden">
+  <div class="warn-head" id="warn-toggle">
+    <span>⚠️ <b>天氣特報 <span id="warn-count">0</span> 則</b> <span class="muted">來源：CWA W-C0033</span></span>
+    <span class="muted" id="warn-arrow">收合 ▲</span>
+  </div>
+  <div id="warn-list"></div>
 </div>
 
 <div id="controls" class="panel">
@@ -90,6 +144,7 @@
     <button class="btn active" data-base="dark">深色</button>
     <button class="btn" data-base="street">街道圖</button>
   </div>
+  <label class="check"><input type="checkbox" id="show-counties" checked> 縣市界線</label>
   <label class="check"><input type="checkbox" id="show-labels" checked> 顯示數值標籤</label>
   <button class="btn" id="locate" style="margin-top:10px">📍 定位我的位置</button>
 </div>
@@ -106,6 +161,8 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script>
 // 每個圖層：要顯示的欄位、單位、色階（值 → 顏色）
 const LAYERS = {
@@ -130,11 +187,21 @@ const map = L.map("map", { zoomControl: false }).setView([23.7, 120.9], 8);
 L.control.zoom({ position: "bottomright" }).addTo(map);
 let basemap = BASEMAPS.dark.addTo(map);
 
+// 縣市界線在下層、測站在上層，點測站看測站資料，點縣市其他區域看縣市預報
+map.createPane("counties").style.zIndex = 390;
+const countyLayer = L.geoJSON(null, { pane: "counties" }).addTo(map);
 const markers = L.layerGroup().addTo(map);
-let stations = [];
-let currentLayer = "temp";
 
-// 依色階內插出顏色
+let stations = [];
+let countyWarnings = {};   // 縣市 → 特報名稱列表
+let currentLayer = "temp";
+let selectedCounty = null;
+let chart = null;
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+// ---------- 色階與格式 ----------
 function colorFor(value, stops) {
   if (value <= stops[0][0]) return stops[0][1];
   for (let i = 1; i < stops.length; i++) {
@@ -153,27 +220,28 @@ function fmt(value, digits, unit) {
   return value === null ? "無資料" : `${value.toFixed(digits)} ${unit}`;
 }
 
-function windArrow(deg) {
+function windName(deg) {
   if (deg === null) return "";
   const dirs = ["北", "東北", "東", "東南", "南", "西南", "西", "西北"];
   return `（${dirs[Math.round(deg / 45) % 8]}風）`;
 }
 
+// ---------- 測站圖層 ----------
 function popupHtml(s) {
-  return `<b>${s.name}</b>　<span style="color:#888">${s.county}${s.town}</span><br>
-    天氣：${s.weather || "無資料"}<br>
+  return `<b>${esc(s.name)}</b>　<span style="color:#888">${esc(s.county)}${esc(s.town)}</span><br>
+    天氣：${esc(s.weather || "無資料")}<br>
     氣溫：${fmt(s.temp, 1, "°C")}（今日 ${s.low ?? "–"} ~ ${s.high ?? "–"} °C）<br>
     今日累積雨量：${fmt(s.rain, 1, "mm")}<br>
-    風速：${fmt(s.windSpeed, 1, "m/s")} ${windArrow(s.windDir)}<br>
+    風速：${fmt(s.windSpeed, 1, "m/s")} ${windName(s.windDir)}<br>
     相對濕度：${fmt(s.humidity, 0, "%")}<br>
     氣壓：${fmt(s.pressure, 1, "hPa")}<br>
     海拔：${s.altitude ?? "–"} m`;
 }
 
-// 畫出目前圖層的所有測站：放大到 9 級以上顯示數值，較小時只顯示色點避免重疊
+// 放大到 9 級以上顯示數值標籤，較小時只顯示色點避免重疊
 function render() {
   const layer = LAYERS[currentLayer];
-  const showLabels = document.getElementById("show-labels").checked && map.getZoom() >= 9;
+  const showLabels = $("show-labels").checked && map.getZoom() >= 9;
   markers.clearLayers();
 
   for (const s of stations) {
@@ -184,26 +252,24 @@ function render() {
       ? L.marker([s.lat, s.lon], { icon: L.divIcon({ className: "",
           html: `<span class="badge" style="background:${color}">${value.toFixed(layer.digits)}</span>` }) })
       : L.circleMarker([s.lat, s.lon], { radius: 5, color: "#000", weight: 0.5, fillColor: color, fillOpacity: 0.9 });
-    marker.bindPopup(popupHtml(s)).bindTooltip(`${s.name} ${value.toFixed(layer.digits)} ${layer.unit}`);
+    marker.bindPopup(popupHtml(s)).bindTooltip(`${esc(s.name)} ${value.toFixed(layer.digits)} ${layer.unit}`);
     markers.addLayer(marker);
   }
   renderLegend(layer);
 }
 
 function renderLegend(layer) {
-  document.getElementById("legend-title").textContent = `${layer.name}（${layer.unit}）`;
-  document.getElementById("legend-bar").style.background =
-    `linear-gradient(to right, ${layer.stops.map((s) => s[1]).join(",")})`;
-  document.getElementById("legend-ticks").innerHTML = layer.stops.map((s) => `<span>${s[0]}</span>`).join("");
+  $("legend-title").textContent = `${layer.name}（${layer.unit}）`;
+  $("legend-bar").style.background = `linear-gradient(to right, ${layer.stops.map((s) => s[1]).join(",")})`;
+  $("legend-ticks").innerHTML = layer.stops.map((s) => `<span>${s[0]}</span>`).join("");
 }
 
-// 統計卡：找出各項極值與測站
 function renderStats() {
   const extreme = (field, pick) => stations.filter((s) => s[field] !== null)
     .reduce((best, s) => (best === null || pick(s[field], best[field]) ? s : best), null);
   const show = (id, s, field, digits, unit) => {
-    document.getElementById(id).innerHTML = s ? `${s[field].toFixed(digits)} <small>${unit}</small>` : "–";
-    document.getElementById(`${id}-at`).textContent = s ? s.name : "";
+    $(id).innerHTML = s ? `${s[field].toFixed(digits)} <small>${unit}</small>` : "–";
+    $(`${id}-at`).textContent = s ? s.name : "";
   };
   show("max-temp", extreme("temp", (a, b) => a > b), "temp", 1, "°C");
   show("min-temp", extreme("temp", (a, b) => a < b), "temp", 1, "°C");
@@ -211,28 +277,168 @@ function renderStats() {
   show("max-wind", extreme("windSpeed", (a, b) => a > b), "windSpeed", 1, "m/s");
 }
 
+// ---------- 縣市界線 ----------
+function countyStyle(feature) {
+  const name = feature.properties.COUNTYNAME;
+  const warned = !!countyWarnings[name];
+  const selected = name === selectedCounty;
+  return {
+    color: selected ? "#4a90e2" : warned ? "#f5a623" : "rgba(255,255,255,0.55)",
+    weight: selected ? 3 : warned ? 1.6 : 1,
+    dashArray: warned && !selected ? "4 3" : null,
+    fillColor: selected ? "#4a90e2" : warned ? "#f5a623" : "#fff",
+    fillOpacity: selected ? 0.15 : warned ? 0.12 : 0.01,   // 0.01：透明但仍可點擊
+  };
+}
+
+async function loadCounties() {
+  const topo = await (await fetch("/data/counties.json")).json();
+  const geo = topojson.feature(topo, topo.objects.counties);
+  // 界線檔寫「台北市」，CWA 寫「臺北市」，統一成 CWA 的寫法
+  geo.features.forEach((f) => (f.properties.COUNTYNAME = f.properties.COUNTYNAME.replace("台", "臺")));
+  countyLayer.addData(geo);
+  countyLayer.eachLayer((layer) => {
+    const name = layer.feature.properties.COUNTYNAME;
+    layer.bindTooltip(name, { sticky: true });
+    layer.on("click", () => openCounty(name));
+    layer.on("mouseover", () => layer.setStyle({ weight: 3 }));
+    layer.on("mouseout", () => countyLayer.resetStyle(layer));
+  });
+  countyLayer.setStyle(countyStyle);
+}
+
+// ---------- 天氣特報 ----------
+async function loadWarnings() {
+  try {
+    const resp = await fetch("/api/warnings");
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error);
+    countyWarnings = data.counties;
+    countyLayer.setStyle(countyStyle);
+
+    $("warn-count").textContent = data.warnings.length;
+    $("warnings").classList.toggle("hidden", data.warnings.length === 0);
+    $("warn-list").innerHTML = data.warnings.map((w) => `
+      <div class="warn-item">
+        <span class="title">${esc(w.title)}</span>
+        <span class="muted">有效至 ${esc(w.endTime.slice(5, 16))}</span>
+        <div class="text">${esc(w.text)}</div>
+        <span class="more">展開全文 ▼</span>
+      </div>`).join("");
+    $("warn-list").querySelectorAll(".warn-item").forEach((item) => {
+      item.querySelector(".more").onclick = () => {
+        const open = item.classList.toggle("open");
+        item.querySelector(".more").textContent = open ? "收合 ▲" : "展開全文 ▼";
+      };
+    });
+  } catch (err) {
+    console.warn("特報載入失敗", err);
+  }
+}
+
+$("warn-toggle").onclick = () => {
+  const collapsed = $("warn-list").classList.toggle("hidden");
+  $("warn-arrow").textContent = collapsed ? "展開 ▼" : "收合 ▲";
+};
+
+// ---------- 縣市預報面板 ----------
+function renderCountyNow(name) {
+  const list = stations.filter((s) => s.county === name);
+  const temps = list.map((s) => s.temp).filter((t) => t !== null);
+  const avg = temps.length ? temps.reduce((a, b) => a + b, 0) / temps.length : null;
+  const maxRain = Math.max(0, ...list.map((s) => s.rain ?? 0));
+  const main = list.find((s) => s.weather) || {};
+  $("county-temp").textContent = avg === null ? "–" : `${avg.toFixed(1)}°C`;
+  $("county-now").textContent = `${main.weather || ""}　現在平均氣溫`;
+  $("county-detail").textContent = temps.length
+    ? `${list.length} 個測站｜氣溫 ${Math.min(...temps).toFixed(1)} ~ ${Math.max(...temps).toFixed(1)}°C｜今日最大雨量 ${maxRain.toFixed(1)} mm`
+    : "";
+  $("county-warnings").innerHTML = (countyWarnings[name] || []).map((w) => `<span class="tag">⚠️ ${esc(w)}</span>`).join("");
+}
+
+async function openCounty(name) {
+  selectedCounty = name;
+  countyLayer.setStyle(countyStyle);
+  $("info").classList.add("hidden");
+  $("county").classList.remove("hidden");
+  $("county-name").textContent = name;
+  renderCountyNow(name);
+  $("county-days").innerHTML = `<tr><td class="muted">預報載入中…</td></tr>`;
+
+  try {
+    const resp = await fetch(`/api/forecast?county=${encodeURIComponent(name)}`);
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error);
+    if (selectedCounty !== name) return;   // 載入期間使用者已點了別的縣市
+    renderForecast(data.days);
+  } catch (err) {
+    $("county-days").innerHTML = `<tr><td class="muted">預報載入失敗：${esc(err.message)}</td></tr>`;
+  }
+}
+
+function renderForecast(days) {
+  const label = (d) => `${d.date.slice(5).replace("-", "/")}(${"日一二三四五六"[new Date(d.date).getDay()]})`;
+
+  if (chart) chart.destroy();
+  chart = new Chart($("county-chart"), {
+    data: {
+      labels: days.map(label),
+      datasets: [
+        { type: "line", label: "最高溫", data: days.map((d) => d.maxT), borderColor: "#e74c3c", backgroundColor: "#e74c3c", yAxisID: "t", tension: 0.3 },
+        { type: "line", label: "最低溫", data: days.map((d) => d.minT), borderColor: "#3498db", backgroundColor: "#3498db", yAxisID: "t", tension: 0.3 },
+        { type: "bar", label: "降雨機率", data: days.map((d) => d.pop), backgroundColor: "rgba(120,170,255,0.25)", yAxisID: "p" },
+      ],
+    },
+    options: {
+      maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: "#cfd6e2", boxWidth: 10, font: { size: 11 } } } },
+      scales: {
+        x: { ticks: { color: "#9aa4b5", font: { size: 10 } }, grid: { color: "rgba(255,255,255,0.05)" } },
+        t: { position: "left", ticks: { color: "#9aa4b5", callback: (v) => `${v}°` }, grid: { color: "rgba(255,255,255,0.05)" } },
+        p: { position: "right", min: 0, max: 100, ticks: { color: "#9aa4b5", callback: (v) => `${v}%` }, grid: { display: false } },
+      },
+    },
+  });
+
+  $("county-days").innerHTML = days.map((d) => `
+    <tr>
+      <td>${label(d)}</td>
+      <td>${esc(d.weather || "–")}</td>
+      <td>${d.minT ?? "–"} ~ ${d.maxT ?? "–"}°C</td>
+      <td>💧${d.pop === null ? "–" : d.pop + "%"}</td>
+    </tr>`).join("");
+}
+
+$("county-close").onclick = () => {
+  selectedCounty = null;
+  countyLayer.setStyle(countyStyle);
+  $("county").classList.add("hidden");
+  $("info").classList.remove("hidden");
+};
+
+// ---------- 載入與更新 ----------
 async function load() {
-  const statusText = document.getElementById("status-text");
-  statusText.textContent = "載入中…";
+  $("status-text").textContent = "載入中…";
   try {
     const resp = await fetch("/api/weather");
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || resp.status);
 
     stations = data.stations;
-    const obs = new Date(data.obsTime);
-    document.getElementById("obs-time").textContent = obs.toLocaleString("zh-TW", { hour12: false });
-    document.getElementById("station-count").textContent = data.count;
-    statusText.textContent = `更新於 ${new Date().toLocaleTimeString("zh-TW", { hour12: false })}`;
+    $("obs-time").textContent = new Date(data.obsTime).toLocaleString("zh-TW", { hour12: false });
+    $("station-count").textContent = data.count;
+    $("status-text").textContent = `更新於 ${new Date().toLocaleTimeString("zh-TW", { hour12: false })}`;
     renderStats();
     render();
+    if (selectedCounty) renderCountyNow(selectedCounty);
   } catch (err) {
-    statusText.textContent = `載入失敗：${err.message}`;
+    $("status-text").textContent = `載入失敗：${err.message}`;
   }
+  loadWarnings();
 }
 
-// 圖層按鈕
-const layerButtons = document.getElementById("layer-buttons");
+// ---------- 控制項 ----------
+const layerButtons = $("layer-buttons");
 for (const [key, layer] of Object.entries(LAYERS)) {
   const btn = document.createElement("button");
   btn.className = "btn" + (key === currentLayer ? " active" : "");
@@ -245,7 +451,6 @@ for (const [key, layer] of Object.entries(LAYERS)) {
   layerButtons.appendChild(btn);
 }
 
-// 底圖切換
 document.querySelectorAll("[data-base]").forEach((btn) => {
   btn.onclick = () => {
     map.removeLayer(basemap);
@@ -254,16 +459,17 @@ document.querySelectorAll("[data-base]").forEach((btn) => {
   };
 });
 
-// 定位我的位置（瀏覽器內建 Geolocation）
-document.getElementById("locate").onclick = () => map.locate({ setView: true, maxZoom: 11 });
+$("show-counties").onchange = (e) => (e.target.checked ? map.addLayer(countyLayer) : map.removeLayer(countyLayer));
+$("show-labels").onchange = render;
+$("refresh").onclick = load;
+map.on("zoomend", render);
+
+$("locate").onclick = () => map.locate({ setView: true, maxZoom: 11 });
 map.on("locationfound", (e) => L.circleMarker(e.latlng, { radius: 8, color: "#4a90e2", fillOpacity: 0.8 })
   .addTo(map).bindPopup("你的位置").openPopup());
 map.on("locationerror", () => alert("無法取得你的位置"));
 
-document.getElementById("show-labels").onchange = render;
-document.getElementById("refresh").onclick = load;
-map.on("zoomend", render);
-
+loadCounties().catch((err) => console.warn("縣市界線載入失敗", err));
 load();
 setInterval(load, 10 * 60 * 1000);  // 每 10 分鐘自動更新
 </script>

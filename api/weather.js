@@ -1,14 +1,7 @@
-// Vercel Serverless Function：GET /api/weather
-// 向中央氣象署 CWA 取得 O-A0003-001（現在天氣觀測報告），整理成前端需要的精簡格式。
-// 授權碼放在環境變數 CWA_API_KEY，不會出現在前端或 GitHub。
+// GET /api/weather
+// O-A0003-001（現在天氣觀測報告）：全台測站即時觀測，整理成前端需要的精簡格式。
 
-const CWA_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0003-001";
-
-// CWA 以 -99 / -999 等負值表示「無資料」
-function num(value) {
-  const n = parseFloat(value);
-  return Number.isFinite(n) && n > -90 ? n : null;
-}
+const { cwaFetch, send, num } = require("./_cwa");
 
 function toStation(s) {
   const wgs84 = s.GeoInfo.Coordinates.find((c) => c.CoordinateName === "WGS84") || s.GeoInfo.Coordinates[0];
@@ -35,33 +28,20 @@ function toStation(s) {
 }
 
 module.exports = async (req, res) => {
-  res.setHeader("Content-Type", "application/json; charset=utf-8");
-
-  const apiKey = process.env.CWA_API_KEY;
-  if (!apiKey) {
-    res.statusCode = 500;
-    return res.end(JSON.stringify({ error: "伺服器未設定 CWA_API_KEY 環境變數" }));
-  }
-
   try {
-    const resp = await fetch(`${CWA_URL}?Authorization=${encodeURIComponent(apiKey)}`);
-    if (!resp.ok) throw new Error(`CWA API 回應 ${resp.status}`);
-    const data = await resp.json();
-
+    const data = await cwaFetch("O-A0003-001");
     const stations = data.records.Station
       .map(toStation)
       .filter((s) => s.lat !== null && s.lon !== null);
 
-    // CDN 快取 5 分鐘：觀測資料約 10 分鐘更新一次，也避免頻繁呼叫 CWA API
-    res.setHeader("Cache-Control", "s-maxage=300, stale-while-revalidate=600");
-    res.end(JSON.stringify({
+    // 觀測資料約 10 分鐘更新一次，CDN 快取 5 分鐘
+    send(res, 200, {
       source: "CWA O-A0003-001",
       obsTime: data.records.Station[0].ObsTime.DateTime,
       count: stations.length,
       stations,
-    }));
+    }, 300);
   } catch (err) {
-    res.statusCode = 502;
-    res.end(JSON.stringify({ error: `無法取得 CWA 資料：${err.message}` }));
+    send(res, 502, { error: `無法取得 CWA 資料：${err.message}` });
   }
 };
