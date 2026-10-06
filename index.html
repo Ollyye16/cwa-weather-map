@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>台灣即時氣象地圖</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root {
+    --panel: rgba(24, 28, 38, 0.92);
+    --card: rgba(255, 255, 255, 0.06);
+    --text: #e8ecf3;
+    --muted: #9aa4b5;
+    --accent: #4a90e2;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #111; color: var(--text);
+    font-family: "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif; }
+  #map { position: absolute; inset: 0; }
+
+  .panel { position: absolute; z-index: 1000; background: var(--panel); border-radius: 12px;
+    padding: 14px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4); }
+  .panel h2 { margin: 0 0 8px; font-size: 17px; }
+  .muted { color: var(--muted); font-size: 12px; line-height: 1.6; }
+
+  #info { top: 12px; left: 12px; width: 270px; }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+  .stat { background: var(--card); border-radius: 8px; padding: 8px 10px; }
+  .stat .label { font-size: 12px; color: var(--muted); }
+  .stat .value { font-size: 21px; font-weight: 700; margin: 2px 0; }
+  .stat .value small { font-size: 12px; font-weight: 400; color: var(--muted); }
+  .stat .where { font-size: 12px; color: var(--muted); }
+
+  #controls { top: 12px; right: 12px; width: 170px; }
+  .controls-title { font-size: 12px; color: var(--muted); margin: 0 0 6px; }
+  .btn { display: block; width: 100%; margin-bottom: 6px; padding: 8px 10px; border: 0;
+    border-radius: 8px; background: var(--card); color: var(--text); font-size: 14px;
+    text-align: left; cursor: pointer; }
+  .btn:hover { background: rgba(255, 255, 255, 0.12); }
+  .btn.active { background: var(--accent); }
+  .row { display: flex; gap: 6px; }
+  .row .btn { text-align: center; }
+  .check { display: flex; align-items: center; gap: 6px; font-size: 13px; margin: 8px 0 0; cursor: pointer; }
+
+  #legend { bottom: 24px; right: 12px; width: 250px; padding: 10px 14px; }
+  #legend-bar { height: 10px; border-radius: 5px; margin: 6px 0 4px; }
+  #legend-ticks { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+
+  #status { bottom: 24px; left: 12px; padding: 8px 12px; font-size: 13px; display: flex; align-items: center; gap: 10px; }
+  #status button { padding: 4px 10px; border: 0; border-radius: 6px; background: var(--card); color: var(--text); cursor: pointer; }
+
+  .badge { border-radius: 10px; padding: 1px 6px; font-size: 12px; font-weight: 700; color: #111;
+    white-space: nowrap; border: 1px solid rgba(0, 0, 0, 0.35); transform: translate(-50%, -50%);
+    display: inline-block; }
+  .leaflet-popup-content { font-size: 13px; line-height: 1.7; }
+  .leaflet-popup-content b { font-size: 15px; }
+
+  @media (max-width: 640px) {
+    #info { width: calc(100% - 24px); }
+    .stats { grid-template-columns: repeat(4, 1fr); }
+    .stat .value { font-size: 16px; }
+    #controls { top: auto; bottom: 70px; width: 150px; }
+    #legend { display: none; }
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="info" class="panel">
+  <h2>台灣即時氣象</h2>
+  <div class="muted">
+    觀測時間：<span id="obs-time">載入中…</span><br>
+    資料來源：CWA O-A0003-001（現在天氣觀測）<br>
+    測站數量：<span id="station-count">–</span> 站
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="label">最高溫</div><div class="value" id="max-temp">–</div><div class="where" id="max-temp-at"></div></div>
+    <div class="stat"><div class="label">最低溫</div><div class="value" id="min-temp">–</div><div class="where" id="min-temp-at"></div></div>
+    <div class="stat"><div class="label">今日最大雨量</div><div class="value" id="max-rain">–</div><div class="where" id="max-rain-at"></div></div>
+    <div class="stat"><div class="label">最大風速</div><div class="value" id="max-wind">–</div><div class="where" id="max-wind-at"></div></div>
+  </div>
+</div>
+
+<div id="controls" class="panel">
+  <p class="controls-title">圖層</p>
+  <div id="layer-buttons"></div>
+  <p class="controls-title" style="margin-top:10px">底圖</p>
+  <div class="row">
+    <button class="btn active" data-base="dark">深色</button>
+    <button class="btn" data-base="street">街道圖</button>
+  </div>
+  <label class="check"><input type="checkbox" id="show-labels" checked> 顯示數值標籤</label>
+  <button class="btn" id="locate" style="margin-top:10px">📍 定位我的位置</button>
+</div>
+
+<div id="legend" class="panel">
+  <div class="muted" id="legend-title"></div>
+  <div id="legend-bar"></div>
+  <div id="legend-ticks"></div>
+</div>
+
+<div id="status" class="panel">
+  <span id="status-text">載入中…</span>
+  <button id="refresh">↻ 重新整理</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// 每個圖層：要顯示的欄位、單位、色階（值 → 顏色）
+const LAYERS = {
+  temp:      { name: "🌡️ 氣溫", field: "temp",      unit: "°C",  digits: 0,
+               stops: [[5, "#3b4cc0"], [12, "#4f9fd9"], [18, "#7fd1c7"], [22, "#d9ef8b"], [26, "#fee08b"], [30, "#fc8d59"], [34, "#d73027"], [37, "#a50026"]] },
+  rain:      { name: "🌧️ 雨量", field: "rain",      unit: "mm",  digits: 1,
+               stops: [[0, "#e0e0e0"], [1, "#a6dcef"], [5, "#4fa3e0"], [10, "#2166ac"], [20, "#7b3294"], [40, "#c51b7d"], [80, "#e7298a"]] },
+  windSpeed: { name: "💨 風速", field: "windSpeed", unit: "m/s", digits: 1,
+               stops: [[0, "#e5f5e0"], [2, "#a1d99b"], [4, "#41ab5d"], [6, "#fdd835"], [8, "#fb8c00"], [11, "#e53935"], [15, "#8e24aa"]] },
+  humidity:  { name: "💧 濕度", field: "humidity",  unit: "%",   digits: 0,
+               stops: [[30, "#fdae61"], [50, "#fee08b"], [65, "#d9ef8b"], [80, "#66bd63"], [90, "#3288bd"], [100, "#1a3f8f"]] },
+};
+
+const BASEMAPS = {
+  dark:   L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+                      { attribution: "Tiles © Esri ｜ 資料：中央氣象署", maxZoom: 16 }),
+  street: L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+                      { attribution: "© OpenStreetMap ｜ 資料：中央氣象署", maxZoom: 18 }),
+};
+
+const map = L.map("map", { zoomControl: false }).setView([23.7, 120.9], 8);
+L.control.zoom({ position: "bottomright" }).addTo(map);
+let basemap = BASEMAPS.dark.addTo(map);
+
+const markers = L.layerGroup().addTo(map);
+let stations = [];
+let currentLayer = "temp";
+
+// 依色階內插出顏色
+function colorFor(value, stops) {
+  if (value <= stops[0][0]) return stops[0][1];
+  for (let i = 1; i < stops.length; i++) {
+    const [v1, c1] = stops[i - 1], [v2, c2] = stops[i];
+    if (value <= v2) {
+      const t = (value - v1) / (v2 - v1);
+      const mix = (a, b) => Math.round(a + (b - a) * t);
+      const rgb = [1, 3, 5].map((k) => mix(parseInt(c1.substr(k, 2), 16), parseInt(c2.substr(k, 2), 16)));
+      return `rgb(${rgb.join(",")})`;
+    }
+  }
+  return stops[stops.length - 1][1];
+}
+
+function fmt(value, digits, unit) {
+  return value === null ? "無資料" : `${value.toFixed(digits)} ${unit}`;
+}
+
+function windArrow(deg) {
+  if (deg === null) return "";
+  const dirs = ["北", "東北", "東", "東南", "南", "西南", "西", "西北"];
+  return `（${dirs[Math.round(deg / 45) % 8]}風）`;
+}
+
+function popupHtml(s) {
+  return `<b>${s.name}</b>　<span style="color:#888">${s.county}${s.town}</span><br>
+    天氣：${s.weather || "無資料"}<br>
+    氣溫：${fmt(s.temp, 1, "°C")}（今日 ${s.low ?? "–"} ~ ${s.high ?? "–"} °C）<br>
+    今日累積雨量：${fmt(s.rain, 1, "mm")}<br>
+    風速：${fmt(s.windSpeed, 1, "m/s")} ${windArrow(s.windDir)}<br>
+    相對濕度：${fmt(s.humidity, 0, "%")}<br>
+    氣壓：${fmt(s.pressure, 1, "hPa")}<br>
+    海拔：${s.altitude ?? "–"} m`;
+}
+
+// 畫出目前圖層的所有測站：放大到 9 級以上顯示數值，較小時只顯示色點避免重疊
+function render() {
+  const layer = LAYERS[currentLayer];
+  const showLabels = document.getElementById("show-labels").checked && map.getZoom() >= 9;
+  markers.clearLayers();
+
+  for (const s of stations) {
+    const value = s[layer.field];
+    if (value === null) continue;
+    const color = colorFor(value, layer.stops);
+    const marker = showLabels
+      ? L.marker([s.lat, s.lon], { icon: L.divIcon({ className: "",
+          html: `<span class="badge" style="background:${color}">${value.toFixed(layer.digits)}</span>` }) })
+      : L.circleMarker([s.lat, s.lon], { radius: 5, color: "#000", weight: 0.5, fillColor: color, fillOpacity: 0.9 });
+    marker.bindPopup(popupHtml(s)).bindTooltip(`${s.name} ${value.toFixed(layer.digits)} ${layer.unit}`);
+    markers.addLayer(marker);
+  }
+  renderLegend(layer);
+}
+
+function renderLegend(layer) {
+  document.getElementById("legend-title").textContent = `${layer.name}（${layer.unit}）`;
+  document.getElementById("legend-bar").style.background =
+    `linear-gradient(to right, ${layer.stops.map((s) => s[1]).join(",")})`;
+  document.getElementById("legend-ticks").innerHTML = layer.stops.map((s) => `<span>${s[0]}</span>`).join("");
+}
+
+// 統計卡：找出各項極值與測站
+function renderStats() {
+  const extreme = (field, pick) => stations.filter((s) => s[field] !== null)
+    .reduce((best, s) => (best === null || pick(s[field], best[field]) ? s : best), null);
+  const show = (id, s, field, digits, unit) => {
+    document.getElementById(id).innerHTML = s ? `${s[field].toFixed(digits)} <small>${unit}</small>` : "–";
+    document.getElementById(`${id}-at`).textContent = s ? s.name : "";
+  };
+  show("max-temp", extreme("temp", (a, b) => a > b), "temp", 1, "°C");
+  show("min-temp", extreme("temp", (a, b) => a < b), "temp", 1, "°C");
+  show("max-rain", extreme("rain", (a, b) => a > b), "rain", 1, "mm");
+  show("max-wind", extreme("windSpeed", (a, b) => a > b), "windSpeed", 1, "m/s");
+}
+
+async function load() {
+  const statusText = document.getElementById("status-text");
+  statusText.textContent = "載入中…";
+  try {
+    const resp = await fetch("/api/weather");
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || resp.status);
+
+    stations = data.stations;
+    const obs = new Date(data.obsTime);
+    document.getElementById("obs-time").textContent = obs.toLocaleString("zh-TW", { hour12: false });
+    document.getElementById("station-count").textContent = data.count;
+    statusText.textContent = `更新於 ${new Date().toLocaleTimeString("zh-TW", { hour12: false })}`;
+    renderStats();
+    render();
+  } catch (err) {
+    statusText.textContent = `載入失敗：${err.message}`;
+  }
+}
+
+// 圖層按鈕
+const layerButtons = document.getElementById("layer-buttons");
+for (const [key, layer] of Object.entries(LAYERS)) {
+  const btn = document.createElement("button");
+  btn.className = "btn" + (key === currentLayer ? " active" : "");
+  btn.textContent = layer.name;
+  btn.onclick = () => {
+    currentLayer = key;
+    layerButtons.querySelectorAll(".btn").forEach((b) => b.classList.toggle("active", b === btn));
+    render();
+  };
+  layerButtons.appendChild(btn);
+}
+
+// 底圖切換
+document.querySelectorAll("[data-base]").forEach((btn) => {
+  btn.onclick = () => {
+    map.removeLayer(basemap);
+    basemap = BASEMAPS[btn.dataset.base].addTo(map);
+    document.querySelectorAll("[data-base]").forEach((b) => b.classList.toggle("active", b === btn));
+  };
+});
+
+// 定位我的位置（瀏覽器內建 Geolocation）
+document.getElementById("locate").onclick = () => map.locate({ setView: true, maxZoom: 11 });
+map.on("locationfound", (e) => L.circleMarker(e.latlng, { radius: 8, color: "#4a90e2", fillOpacity: 0.8 })
+  .addTo(map).bindPopup("你的位置").openPopup());
+map.on("locationerror", () => alert("無法取得你的位置"));
+
+document.getElementById("show-labels").onchange = render;
+document.getElementById("refresh").onclick = load;
+map.on("zoomend", render);
+
+load();
+setInterval(load, 10 * 60 * 1000);  // 每 10 分鐘自動更新
+</script>
+</body>
+</html>
